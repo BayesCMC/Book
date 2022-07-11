@@ -1,0 +1,221 @@
+---
+title: "Quantitative Decision-Making, a CMC application to analytical method equivalence"
+subtitle: "R Code"
+author: 
+  - Misbah Ahmed (Early Development Statistics, GSK, Stevenage, UK)
+  - Mike Denham (CMC Statistics, GSK, Ware, UK)
+output:
+  bookdown::html_document2
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE, eval.after="fig.cap", fig.asp=0.5)
+require(tidyverse)
+require(ggplot2)
+require(PowerTOST)
+```
+
+```{r SampleSizeTOST, echo=TRUE, warning=FALSE, message=FALSE}
+sampleN.TOST.equiv <- function(Delta=0, Sigma=1, TargetPower=0.9, alpha=0.05, 
+                               UpperLimit=1, LowerLimit=-UpperLimit){
+  if (!requireNamespace("PowerTOST")) {
+    stop("Please install the PowerTOST package prior to using this function.")
+    }
+  out <- PowerTOST::sampleN.TOST(logscale=FALSE, targetpower=TargetPower, 
+                          theta1=LowerLimit, theta2=UpperLimit, 
+                          alpha=alpha, theta0=Delta, CV=Sigma, 
+                          design="parallel", print=FALSE)[-1]
+  names(out) <- c("alpha", "Sigma", 
+        "Delta", "LowerLimit", "UpperLimit", "SampleSize", 
+        "AchievedPower", "TargetPower")
+  return(out)
+}
+```
+
+```{r PowerTOST, echo=TRUE, warning=FALSE, message=FALSE, cache=TRUE}
+power.TOST.equiv <- function(Delta=0, Sigma=1, SampleSizes, alpha=0.05, 
+                               UpperLimit=1, LowerLimit=-UpperLimit){
+  if (!requireNamespace("PowerTOST")) {
+    stop("Please install the PowerTOST package prior to using this function.")
+    }
+  PowerTOST::power.TOST(alpha=alpha, logscale=FALSE, theta1=LowerLimit, theta2=UpperLimit,
+                        theta0=Delta, CV=Sigma, n=SampleSizes,
+                        design="parallel", method="exact")
+}
+```
+
+```{r PowerTOST2, echo=TRUE, warning=FALSE, message=FALSE, fig.cap='Power of Equal Variance TOST $(-E_L=E_U=2, n_T=n_R=7, \\sigma=1, \\alpha=0.05)$.'}
+data <- tibble(Delta=seq(-2.5, 2.5, length.out=101),
+               Power=power.TOST.equiv(Delta=Delta, Sigma=1, UpperLimit=2, 
+                                      SampleSizes=rep(7,2)))
+
+ggplot() +
+    xlab(expression(Delta)) +
+    ylab("Power (%)") +
+    scale_y_continuous(expand=c(0,0), breaks=seq(0,100,10), limits=c(0,100))  +
+    scale_x_continuous(expand=c(0,0), breaks=seq(-2.5,2.5,by=0.5), limits=c(-2.5,2.5)) +
+    geom_path(data=data, aes(x=Delta, y=100*Power)) + 
+    geom_segment(aes(x=-2, y=95, xend=2, yend=95), colour="darkgrey",
+                 arrow=arrow(ends="both", length=unit(0.1,"inches"))) +
+    geom_hline(yintercept=5, colour="darkgrey", lty=2) +
+    geom_text(aes(x=-2.4, y=6, label="5%"), hjust=0, vjust=0, colour="darkgrey") +
+    geom_segment(aes(x=c(-2,2),y=c(0,0), xend=c(-2,2),yend=c(95,95)), colour="darkgrey") +
+    geom_text(aes(x=0, y=98, label="Equivalence Region"), colour="darkgrey")
+```
+
+```{r Assurance0, echo=FALSE}
+data <- data %>%
+  mutate(Prior=dunif(Delta, min=-2, max=2),
+         Product=Power*Prior)
+AssuranceData <- filter(data, abs(Delta)<=2) 
+Assurance <- 0.5*sum(diff(AssuranceData$Delta)*
+                     (AssuranceData$Product[-1]+AssuranceData$Product[-length(AssuranceData$Delta)])
+                     )
+```
+
+```{r Assurance, echo=TRUE, fig.cap=paste0('Assurance of Equal Variance TOST $(-E_L=E_U=2, n_T=n_R=6, \\sigma=1, \\alpha=0.05)$ with a uniform prior for $\\Delta$ over [-2,2]. The solid line represents $P(S1|\\Delta, \\sigma, n_T,n_R,E_L,E_U,\\alpha)$, the power curve for the TOST. The dotted line and light grey shaded region represent $\\pi(\\Delta)$, the prior density for $\\Delta$. The dashed line represents the product of the power and prior, whilst the area of the associated dark grey region gives $P(S1)$, the assurance, which equals ', round(100*Assurance,0),'%.')}
+data <- data %>%
+  mutate(Prior=dunif(Delta, min=-2, max=2),
+         Product=Power*Prior)
+
+ggplot() +
+  xlab(expression(Delta)) +
+  ylab("Power/Density") +
+  scale_y_continuous(expand=c(0,0), breaks=seq(0,1,by=0.1), limits=c(0,1))  +
+  scale_x_continuous(expand=c(0,0), breaks=seq(-2.5,2.5,by=0.5), limits=c(-2.5,2.5)) +
+  geom_area(data=filter(data, abs(Delta)<=2), aes(x=Delta, y=Prior), colour="black",
+            fill="lightgrey", outline.type="full", lwd=.5, lty=3) +
+  geom_path(data=data, aes(x=Delta, y=Power), color="black", lty=1) + 
+  geom_area(data=filter(data, abs(Delta)<=2), aes(x=Delta, y=Product), color="black",
+            fill="darkgrey", outline.type="upper", lwd=.5, lty=2)
+```
+
+```{r Assurance2, echo=TRUE}
+AssuranceData <- filter(data, abs(Delta)<=2)
+Assurance <- 0.5*sum(diff(AssuranceData$Delta)*
+                     (AssuranceData$Product[-1] +
+                      AssuranceData$Product[-length(AssuranceData$Delta)]))
+Assurance
+```
+
+```{r ConditionalAssurance, echo=FALSE, fig.cap=paste0('Illustration of conditional assurance. The solid line represents $P(S2|\\Delta)$ the probability of meeting the product quality criteria given a measurement bias of $\\Delta$. The dotted line and light grey shaded region represent $\\pi(\\Delta|S1)$. The dashed line is the product $P(S2|\\Delta)\\pi(\\Delta|S1)$ whilst the conditional assurance is then the size of the dark grey area underneath.')}
+AssayBatchPassRate <- function(Mu, Sigmab, Sigmaw, n, LSL, USL){
+  f <- function(x, Sigmab=Sigmab, Sigmaw=Sigmaw, n=n, LSL=LSL, USL=USL){
+    (pnorm(USL, mean=x, sd=Sigmaw) - pnorm(LSL, mean=x, sd=Sigmaw))^n * 
+      dnorm(x, mean=Mu, sd=Sigmab)
+    }
+  integrate.out <- integrate(f, lower=Mu-10*Sigmab, upper=Mu+10*Sigmab,
+                             Sigmab=Sigmab, Sigmaw=Sigmaw, n=n, LSL=LSL, USL=USL)
+ return(integrate.out$value)
+}
+
+data <- data %>%
+  mutate(row=row(data)) %>%
+  group_by(row) %>%
+  mutate(ConditionalPrior=Product/Assurance,
+         BatchPassRate=AssayBatchPassRate(100+Delta, 2, 2, 2, 95, 105),
+         Product2=BatchPassRate*ConditionalPrior) %>%
+  ungroup()
+
+AssuranceData <- filter(data, abs(Delta)<=2)
+ConditionalAssurance <- 0.5*sum(diff(AssuranceData$Delta)*
+                     (AssuranceData$Product2[-1] +
+                      AssuranceData$Product2[-length(AssuranceData$Delta)]))
+
+ggplot() +
+  xlab(expression(Delta)) +
+  ylab("Probability/Density") +
+  scale_y_continuous(expand=c(0,0), breaks=seq(0,1,by=0.1), limits=c(0,1)) +
+  scale_x_continuous(expand=c(0,0), breaks=seq(-2.5,2.5,by=0.5), limits=c(-2.5,2.5)) +
+  geom_area(data=filter(data, abs(Delta)<=2), aes(x=Delta, y=ConditionalPrior), colour="black",
+              fill="lightgrey", outline.type="full", lwd=.5, lty=3) +
+  geom_path(data=data, aes(x=Delta, y=BatchPassRate),
+        colour="black", lty=1, lwd=.5) +
+  geom_area(data=filter(data, abs(Delta)<=2), aes(x=Delta, y=Product2), color="black",
+              fill="darkgrey", outline.type="upper", lwd=.5, lty=2)
+```
+
+```{r PoSTransfer, echo=TRUE}
+data <- tibble(Delta=seq(-2.5, 2.5, length.out=101),                            #Step 1
+               Power=power.TOST.equiv(Delta=Delta, Sigma=0.9, UpperLimit=2,     #Step 2 
+                                      SampleSizes=rep(5,2)))
+data <- data %>%
+  mutate(Prior=dunif(Delta, min=-2, max=2),                                     #Step 3
+         Product=Power*Prior)                                                   #Step 4
+
+AssuranceData <- filter(data, abs(Delta)<=2)
+Assurance <- 0.5*sum(diff(AssuranceData$Delta)*                                 #Step 5
+                     (AssuranceData$Product[-1] +
+                      AssuranceData$Product[-length(AssuranceData$Delta)]))
+Assurance
+```
+
+```{r PoSTransfer2, echo=TRUE}
+fn1 <- function(x){                                                             #Step 1
+  Power <- power.TOST.equiv(Delta=x, Sigma=0.9,                         
+                           UpperLimit=2, SampleSizes=rep(5,2))
+  Prior <- dunif(x, min=-2, max=2)                                     
+  return(Power*Prior)
+  }
+
+Assurance2 <- integrate(f=fn1, lower=-2, upper=2)                               #Step 2
+Assurance2
+```
+
+```{r PoSTransfer3, echo=TRUE}
+nSim <- 1e4
+Sim.Delta <- runif(nSim, min=-2, max=2)                                         #Step 1
+Sim.Power <- power.TOST.equiv(Delta=Sim.Delta, Sigma=0.9,                       #Step 2                 
+                           UpperLimit=2, SampleSizes=rep(5,2))
+Assurance3 <- mean(Sim.Power)                                                   #Step 3
+Assurance3
+```
+
+```{r PoSbatchRelease, echo=TRUE}
+AssayBatchPassRate <- function(Mu, Sigmab, Sigmaw, n, LSL, USL){
+  f <- function(x, Sigmab=Sigmab, Sigmaw=Sigmaw, n=n, LSL=LSL, USL=USL){
+    (pnorm(USL, mean=x, sd=Sigmaw) - pnorm(LSL, mean=x, sd=Sigmaw))^n * 
+      dnorm(x, mean=Mu, sd=Sigmab)
+    }
+  integrate.out <- integrate(f, lower=Mu-10*Sigmab, upper=Mu+10*Sigmab,
+                             Sigmab=Sigmab, Sigmaw=Sigmaw, n=n, LSL=LSL, USL=USL)
+ return(integrate.out$value)
+}
+
+```
+
+```{r PoSbatchRelease_result, echo=TRUE}
+AssayBatchPassRate(Mu=101, Sigmab=2, Sigmaw=2, n=2, LSL=95, USL=105)
+```
+
+```{r PoSbatchReleasePostTransfer1, echo=TRUE}
+data <- data %>%
+  mutate(row=row(data)) %>%
+  group_by(row) %>%
+  mutate(ConditionalPrior=Product/Assurance,                            #Step 6
+         BatchPassRate=AssayBatchPassRate(101+Delta, 2, 2, 2, 95, 105), #Step 7
+         Product2=BatchPassRate*ConditionalPrior) %>%                   #Step 8
+  ungroup()
+AssuranceData <- filter(data, abs(Delta)<=2)
+ConditionalAssurance <- 0.5*sum(diff(AssuranceData$Delta)*              #Step 9
+                     (AssuranceData$Product2[-1] +
+                      AssuranceData$Product2[-length(AssuranceData$Delta)])) 
+
+ConditionalAssurance
+```
+
+```{r PoSbatchReleasePostTransfer2, echo=TRUE,fig.cap=paste0('Probability of Successful Batch Release conditional on a successful method transfer (conditional assurance). The solid line represents $P(S2|\\Delta)$, the probability of meeting the batch release requirement that two independent analytical samples are both within $95\\%$ to $105\\%$ of the target given a measurement bias of $\\Delta$ with an underlying process mean, between-batch variability and within-batch variability of $101\\%$, $2\\%$ and $2\\%$ respectively. This line is asymmetric because the underlying process mean is offset from the target of $100\\%$. The dotted line and light grey shaded region represent $\\pi(\\Delta|S1)$, the prior distribution of the measurement bias conditional on a successful method transfer. The dashed line is the product $P(S2|\\Delta)\\pi(\\Delta|S1)$ whilst the conditional assurance is then the size of the dark grey area underneath.')}
+
+ggplot() +
+  xlab(expression(Delta)) +
+  ylab("Probability/Density") +
+  scale_y_continuous(expand=c(0,0), breaks=seq(0,1,by=0.1), limits=c(0,1)) +
+  scale_x_continuous(expand=c(0,0), breaks=seq(-2.5,2.5,by=0.5), limits=c(-2.5,2.5)) +
+  geom_area(data=filter(data, abs(Delta)<=2), aes(x=Delta, y=ConditionalPrior), colour="black",
+              fill="lightgrey", outline.type="full", lwd=.5, lty=3) +
+  geom_path(data=data, aes(x=Delta, y=BatchPassRate),
+        colour="black", lty=1, lwd=.5) +
+  geom_area(data=filter(data, abs(Delta)<=2), aes(x=Delta, y=Product2), color="black",
+              fill="darkgrey", outline.type="upper", lwd=.5, lty=2)
+```
+
