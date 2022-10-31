@@ -1,4 +1,4 @@
-# Case Studies in Bayesian Methods for Biopharmaceutical CMC
+## Case Studies in Bayesian Methods for Biopharmaceutical CMC
 
  <img src='Misc/9781032185484_cover.jpg' align="right" height="400" />
   
