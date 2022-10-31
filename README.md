@@ -1,6 +1,6 @@
 # Case Studies in Bayesian Methods for Biopharmaceutical CMC
 
- <img src='Misc/9781032185484_cover.pdf' align="right" height="400" />
+ <img src='Misc/9781032185484_cover.jpg' align="right" height="400" />
   
 The subject of this book is applied Bayesian methods for chemistry, manufacturing, and control (CMC) studies in the biopharmaceutical industry. The book has multiple authors from industry and academia, each contributing a case study (chapter). The collection of case studies covers a broad array of CMC topics, including stability analysis, analytical method development, specification setting, process development and optimization, process control, experimental design, dissolution testing, and comparability studies. The analysis of each case study includes a presentation of code and reproducible output. This book is written with an academic level aimed at practicing nonclinical biostatisticians, most of whom have graduate degrees in statistics.
 
