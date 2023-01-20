@@ -1,0 +1,206 @@
+library(tidybayes)
+library(ggplot2)
+library(dplyr)
+library(brms)
+library(ggdist)
+library(posterior)
+library(tidyr)
+library(stringr)
+library(forcats)
+library(paletteer)
+library(ggdist)
+
+
+graph_hierarchical <- function(fit) {
+
+  # Get posteriors ----
+  d_posts <- posterior::as_draws_df(fit)
+
+  posts<-list()
+  posts[["factor"]]<-d_posts %>%
+    dplyr::select(starts_with("b_"), .draw, .iteration, .chain) %>%
+    tidyr::pivot_longer(cols=starts_with("b_"),values_to="b_factor") %>%
+    dplyr::mutate(
+      factor=stringr::str_match(name,"b_(.+)")[,2]
+    )
+  posts[["mAb"]]<-d_posts %>%
+    dplyr::select(starts_with("r_mAb"), .draw, .iteration, .chain) %>%
+    tidyr::pivot_longer(cols=starts_with("r_mAb"), values_to="b_mAb") %>%
+    dplyr::mutate(
+      mAb = stringr::str_match(name,paste0("r_mAb\\[(.+),(.+)\\]"))[,2],
+      factor=stringr::str_match(name,paste0("r_mAb\\[(.+),(.+)\\]"))[,3]
+    )
+  samps<-posts[["mAb"]] %>%
+    dplyr::left_join(posts[["factor"]], by=c(".chain",".iteration","factor")) %>%
+    dplyr::mutate(
+      b=b_factor+b_mAb,
+      factor_levels=factor,
+      group_levels=mAb
+    )
+
+
+  # Get group level posteriors ----
+
+  grp_level<-list()
+  grp_level[["sigma"]]<-d_posts %>% select(sigma, .chain, .iteration, .draw)
+  grp_level[["factor"]]<-d_posts %>%
+    dplyr::select(starts_with("b_"), .chain, .iteration, .draw) %>%
+    tidyr::pivot_longer(cols=starts_with("b_"),values_to="b_factor") %>%
+    dplyr::mutate(
+      factor=stringr::str_match(name,"b_(.+)")[,2]
+    )
+  grp_level[["mAb"]]<-d_posts %>%
+    dplyr::select(starts_with("sd_mAb_"), .chain, .iteration, .draw) %>%
+    tidyr::pivot_longer(cols=starts_with("sd_mAb_"), values_to="sd_mAb") %>%
+    dplyr::mutate(
+      factor=stringr::str_match(name,paste0("sd_mAb__(.+)"))[,2]
+    )
+
+  b_group_level<-grp_level[["mAb"]] %>%
+    dplyr::left_join(grp_level[["factor"]], by=c(".chain",".iteration","factor")) %>%
+    dplyr::left_join(grp_level[["sigma"]], by=c(".chain",".iteration")) %>%
+    dplyr::mutate(
+      b_group_level=rnorm(nrow(.),b_factor,sd_mAb),
+      factor_levels=factor
+    )
+
+  samps <- samps %>%
+    dplyr::filter(factor_levels != "Intercept") %>%
+    dplyr::mutate_at("factor_levels", ~forcats::fct_inorder(as.factor(.)))
+  b_group_level <- b_group_level %>%
+    dplyr::mutate_at("factor_levels", ~forcats::fct_inorder(as.factor(.)))
+
+
+  # Initialize graph
+  nlevels<-length(levels(factor(samps$group_levels)))
+  percentiles=seq(0.025, 0.5, 0.05)
+
+  gg <- ggplot2::ggplot(samps, ggplot2::aes(group_levels,  b, color=mAb))+
+    ggplot2::geom_blank()+
+    ggplot2::facet_wrap(~factor_levels, ncol=4)+
+    ggplot2::theme_bw()+
+    ggplot2::theme(
+      axis.text.x = ggplot2::element_blank(),
+      panel.grid.major=element_blank())+
+    ylab(expression(beta))
+
+  # Add group level shaded region
+  gg <- gg +
+    ggplot2::geom_ribbon(ggplot2::aes(x=x, ymin=value_low, ymax=value_high, group=pct),
+                         data=b_group_level %>%
+                           dplyr::filter(factor_levels != "Intercept") %>%
+                           dplyr::group_by(factor_levels) %>%
+                           dplyr::summarize(
+                             pct=list(1-2*percentiles),
+                             quant_low=list(tibble::enframe(
+                               quantile(b_group_level,
+                                        probs=percentiles), name="pct_low", value="value_low")),
+                             quant_high=list(tibble::enframe(
+                               quantile(b_group_level,
+                                        probs=1-percentiles), name="pct_high", value="value_high"))
+                           ) %>%
+                           tidyr::unnest(cols = c(pct, quant_low, quant_high)) %>%
+                           tidyr::crossing(x=c(0,nlevels+0.5)),
+                         alpha=0.2,
+                         inherit.aes = FALSE)+
+    paletteer::scale_fill_paletteer_c("grDevices::Grays", direction=1)
+
+  gg <- gg+
+    ggplot2::geom_hline(yintercept=0)+
+    ggdist::stat_pointinterval()
+
+  gg
+
+}
+
+
+# Example 1: Protein A ----
+
+sim1<-read.csv("sim1.csv")
+
+fit_brm1 <- brms::brm(y~load+bh+fr+load:bh+(1+load+bh+fr+load:bh||mAb), data=sim1)
+
+graph_hierarchical(fit_brm1) +
+  coord_cartesian(ylim=c(-0.3, 0.3))
+
+
+fit_brm1 %>%
+  tidybayes::spread_draws(b_load,r_mAb[mAb,parameter]) %>%
+  dplyr::filter(parameter=="load") %>%
+  dplyr::transmute(load=b_load+r_mAb) %>%
+  ggplot2::ggplot(aes(load, mAb))+
+  theme_bw()+
+  stat_halfeye()
+
+summary(fit_brm1)
+plot(fit_brm1)
+
+
+# Example 2: Formulation Robustness ----
+
+sim2<-read.csv("sim2.csv")
+
+fit_brm2 <- brm(y~conc+pH+NaCl+I(conc^2)+I(pH^2)+(conc+pH+NaCl+I(conc^2)+I(pH^2)||mAb), data=sim2)
+
+graph_hierarchical(fit_brm2)
+
+summary(fit_brm2)
+plot(fit_brm2)
+
+
+# Example 2: Informative Priors ----
+
+brm2_draws <- fit_brm2 %>%
+  spread_draws(b_conc,sd_mAb__conc,
+               b_IconcE2,sd_mAb__IconcE2,
+               b_NaCl, sd_mAb__NaCl,
+               sigma) %>%
+  mutate(
+    conc=rnorm(nrow(.), mean=b_conc, sd=sd_mAb__conc),
+    conc2=rnorm(nrow(.), mean=b_IconcE2, sd=sd_mAb__IconcE2),
+    NaCl=rnorm(nrow(.), mean=b_NaCl, sd=sd_mAb__NaCl)
+  )
+
+
+brm2_draws %>%
+  summarise(
+    conc_mean=mean(conc), conc_sd=sd(conc),
+    conc2_mean=mean(conc2), conc2_sd=sd(conc2),
+    NaCl_mean=mean(NaCl), NaCl_sd=sd(NaCl),
+    sigma_mean=mean(sigma), sigma_sd=sd(sigma)
+  )
+prior_summary(fit_brm2)
+
+
+fit_brm3 <- brm(y~conc+pH+NaCl+I(conc^2)+I(pH^2),
+                prior = c(
+                  prior("student_t(3, -0.71, 0.09)", class="b", coef="conc"),
+                  prior("student_t(3, -0.53, 0.12)", class="b", coef="IconcE2"),
+                  prior("student_t(3, -0.13, 0.10)", class="b", coef="NaCl"),
+                  prior("normal(0.2, 0.10)", class="sigma")
+                ),
+                data=data.frame(pH=c(-1,0,1), conc=0, NaCl=0,
+                                y=c(97,96.5,95)))
+
+summary(fit_brm3)
+
+
+pred_grid <- expand.grid(
+  pH=seq(-1,1,0.1),
+  conc=seq(-1,1,0.1),
+  NaCl=c(-1,1)
+)
+pred_vals<-brms::posterior_predict(
+  fit_brm3,
+  newdata=pred_grid
+)
+pred_grid$gt95 <- apply(pred_vals, 2, function(x) {mean(x>95)})
+
+pred_grid %>%
+  ggplot(aes(pH, conc, z=gt95, fill=gt95))+
+  geom_tile()+
+  geom_contour(breaks=0.99, color="black")+
+  scale_fill_gradient(low="black", high="white",limits=c(0,1))+
+  facet_grid(.~NaCl)+
+  theme_bw()
+
